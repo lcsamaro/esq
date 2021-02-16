@@ -20,12 +20,11 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-#define LA_IMPLEMENTATION
-#include "la.h"
-
-#include "sock.h"
-
+#include "common.h"
+#include "connection.h"
 #include "ev.h"
+#include "la.h"
+#include "sock.h"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -37,10 +36,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include "connection.h"
-
-#define MAX_MESSAGE_SIZE 16384
 
 #define MAX_CLIENTS 64
 
@@ -76,22 +71,18 @@ int snd(connection* conn) {
 
 static int total = 0;
 void sock_cb(struct ev_loop *loop, struct ev_io *watcher, int revents) {
-	//puts("cb");
 	connection* conn = (connection*)watcher;
 	if (revents & EV_WRITE) {
-		//puts("onwrite");
 		connection_onwrite(conn, loop);
-		//puts("write");
 		while (!snd(conn)) {
 			total++;
 		}
 		connection_make_writable(conn, loop);
 	}
 	if (revents & EV_READ) {
-		//puts("READ");
 		if (connection_onread(conn) < 0) {
-			//puts("disconnect");
 			// TODO
+			return;
 		}
 		connection_iovec parts[2];
 		parts[0].buf = NULL;
@@ -106,11 +97,8 @@ void sock_cb(struct ev_loop *loop, struct ev_io *watcher, int revents) {
 			return;
 		}
 
-		//printf("recv (%d): %.*s\n", parts[1].len, parts[1].len, parts[1].buf);
-
 		connection_consume_multi(conn, parts, 2);
 	}
-	//puts("cb - end");
 }
 
 int newsock(struct ev_loop *loop, int i, char *addr, int port) {
@@ -127,14 +115,11 @@ int newsock(struct ev_loop *loop, int i, char *addr, int port) {
 	serv_addr.sin_family = AF_INET; 
 	serv_addr.sin_port = htons(port); 
 	if (inet_pton(AF_INET, addr, &serv_addr.sin_addr)<=0) { 
-		printf("\nInvalid address/ Address not supported \n"); 
 		return -1; 
 	} 
 
 	if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) { 
 		if (errno != EINPROGRESS) {
-			printf("\nConnection Failed \n"); 
-			puts(strerror(errno));
 			return -1;
 		}
 	}
@@ -180,8 +165,6 @@ int main(int argc, char **argv) {
 	ev_periodic_start(loop, &tick);
 
 	ev_loop(loop, 0);
-
-	puts("done");
 
 	return 0;
 }
