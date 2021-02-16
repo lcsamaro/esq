@@ -89,8 +89,6 @@ void *ring_buffer_consume(ring_buffer *b, u32 len) {
 		b->w -= b->cap;
 	}
 
-	//printf("read head: %d\n", b->r - b->buf);
-
 	return cur;
 }
 
