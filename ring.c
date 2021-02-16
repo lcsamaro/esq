@@ -109,7 +109,7 @@ static void *ring_buffer_malloc(size_t sz) {
 	int fd = fileno(f);
 	if (fd < 0) return NULL;
 #endif
-	ftruncate(fd, sz); // TODO: read return
+	if (ftruncate(fd, sz)) return NULL;
 	void *buf = mmap(NULL, sz*2, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (buf == MAP_FAILED) return NULL;
 	mmap(buf, sz, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, fd, 0);
