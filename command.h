@@ -20,10 +20,14 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
+#ifndef COMMAND_H
+#define COMMAND_H
 
 #include "la.h"
 #include "session.h"
 
 int validate_command(char *buf, u32 len);
 int process_command(struct ev_loop *loop, session *s, char *buf, u32 len);
+
+#endif /* COMMAND_H */
 
