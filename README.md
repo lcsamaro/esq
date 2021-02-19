@@ -13,7 +13,9 @@ Async I/O is done through [libev](http://software.schmorp.de/pkg/libev.html).
 
 ## tail topic
 `$ ./esq-tail topic_a`
+
 `$ ./esq-tail -n -10 topic_a` (w/ last 10 events)
+
 `$ ./esq-tail -n +0 topic_a` (from start)
 
 ## write event
