@@ -67,8 +67,8 @@ static void bcast(session *s, void *ctx) {
 		s->live = 0;
 		if (!s->enqueued) {
 			// add to reader queue
-			queue_push(bctx->reader_worker_queue, &s, sizeof(session*), 1);
 			s->enqueued = 1;
+			queue_push(bctx->reader_worker_queue, &s, sizeof(session*), 1);
 		}
 		goto done;
 	}
@@ -83,9 +83,7 @@ static void bcast(session *s, void *ctx) {
 		goto done;
 	}
 
-	if (!connection_is_writable((connection*)s)) {
-		s->offset = bctx->offset+1; // next offset to read
-	}
+	s->offset = bctx->offset+1; // next offset to read
 
 	// add to bcast write list
 	s->bcast_next = bctx->bcast_next;
@@ -165,13 +163,15 @@ int process_command(struct ev_loop *loop, session *s, char *buf, u32 len) {
 
 
 		// > loop
-		mtx_lock(&u->mutex);
 		session *n = bctx.bcast_next;
 		while (n) {
-			connection_make_writable((connection*)n, loop);
+			session_lock((session*)n);
+			mtx_lock(&u->mutex);
+			connection_enable_write((connection*)n, loop);
+			mtx_unlock(&u->mutex);
+			session_unlock((session*)n);
 			n = n->bcast_next;
 		}
-		mtx_unlock(&u->mutex);
 		// < loop
 
 		if (bctx.bcast_next) {
@@ -266,29 +266,6 @@ int process_command(struct ev_loop *loop, session *s, char *buf, u32 len) {
 		watchers_update_watcher(&u->ws, 0, 0, 0, s);
 		break;
 	case 'p':
-		{
-		char *pong = "p";
-		u32 len = sizeof(u32) + sizeof(char);
-
-		connection_iovec parts[2];
-		parts[0].buf = &len;
-		parts[0].len = sizeof(u32);
-		parts[1].buf = &pong;
-		parts[1].len = sizeof(char);
-
-		session_lock(s);
-		if (connection_send_multi((connection*)s, parts, 2)) { // full send buffer
-			session_unlock(s);
-			return 1;
-		}
-		session_unlock(s);
-
-		mtx_lock(&u->mutex);
-		connection_make_writable((connection*)s, loop);
-		mtx_unlock(&u->mutex);
-
-		ev_async_send(loop, &u->async_w);
-		}
 		break;
 	}
 

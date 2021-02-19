@@ -35,8 +35,6 @@ typedef struct connection_iovec {
 typedef struct connection {
 	ev_io io;
 
-	int writable;
-
 	ring_buffer r;
 	ring_buffer w;
 } connection;
@@ -45,7 +43,8 @@ int connection_init(connection *o, u32 size);
 void connection_destroy(connection *o);
 void connection_reset(connection *o);
 int connection_is_writable(connection *o);
-void connection_make_writable(connection *o, struct ev_loop *loop);
+void connection_enable_write(connection *o, struct ev_loop *loop);
+void connection_disable_write(connection *o, struct ev_loop *loop);
 int connection_send_multi(connection *o, connection_iovec *parts, u32 n);
 int connection_send(connection *o, char *buf, u32 len);
 int connection_peek(connection *o, char **buf, u32 len);

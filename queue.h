@@ -45,7 +45,7 @@ void queue_destroy(queue *q);
 void queue_clear(queue *q);
 int queue_push_multi(queue *q, queue_buffer_part *parts, u32 n, int block);
 int queue_push(queue *q, void *buf, u32 len, int block);
-void queue_peek(queue *q, void **buf, u32 *len);
+int queue_peek(queue *q, void **buf, u32 *len, int block);
 int queue_peek_next(queue *q, void **buf, u32 *len);
 void queue_pop(queue *q);
 void queue_drop(queue *q);

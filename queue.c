@@ -93,13 +93,18 @@ static void queue_consume(queue *q) {
 	ring_buffer_consume(&q->buffer, len + sizeof(u32));
 }
 
-void queue_peek(queue *q, void **buf, u32 *len) {
+int queue_peek(queue *q, void **buf, u32 *len, int block) {
 	mtx_lock(&q->mutex);
 	while (queue_empty(q)) {
+		if (!block) {
+			mtx_unlock(&q->mutex);
+			return 1;
+		}
 		cnd_wait(&q->not_empty, &q->mutex);
 	}
 	memcpy(len, ring_buffer_data(&q->buffer), sizeof(u32));
 	*buf = (u8*)ring_buffer_data(&q->buffer) + sizeof(u32);
+	return 0;
 }
 
 int queue_peek_next(queue *q, void **buf, u32 *len) {

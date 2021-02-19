@@ -22,9 +22,10 @@
  */
 #include "la.h"
 
-#include "sock.h"
-
+#include "common.h"
+#include "connection.h"
 #include "ev.h"
+#include "sock.h"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -39,17 +40,22 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "connection.h"
-
-#define MAX_MESSAGE_SIZE 16384
-
 connection sock_watcher;
 connection stdout_watcher;
+
+int bp = 0;
 
 void sock_cb(struct ev_loop *loop, struct ev_io *w, int revents) {
 	connection* conn = (connection*)w;
 	if (revents & EV_WRITE) {
-		connection_onwrite(conn, loop);
+		if (connection_onwrite(conn, loop) < 0) {
+			exit(1);
+			return;
+		}
+
+		if (connection_empty_send(conn)) {
+			connection_disable_write(conn, loop);
+		}
 	}
 	if (!(revents & EV_READ)) return;
 
@@ -82,6 +88,7 @@ void sock_cb(struct ev_loop *loop, struct ev_io *w, int revents) {
 		char *str = buf + sizeof(u64);
 		int str_len = (int)(len - sizeof(u64));
 
+#if 1
 		// write stdout
 		connection_iovec wparts[2];
 		wparts[0].buf = str;
@@ -90,9 +97,26 @@ void sock_cb(struct ev_loop *loop, struct ev_io *w, int revents) {
 		wparts[1].len = sizeof(char);
 
 		if (connection_send_multi(&stdout_watcher, wparts, 2)) {
+			bp = 1;
 			return; // backpressure
 		}
-		connection_make_writable(&stdout_watcher, loop);
+#else
+		// DBG
+		connection_iovec wparts[3];
+		char num[10];
+		sprintf(num, "%8llu ", offset);
+		wparts[0].buf = num;
+		wparts[0].len = 10;
+		wparts[1].buf = str;
+		wparts[1].len = str_len;
+		wparts[2].buf = "\n";
+		wparts[2].len = sizeof(char);
+		if (connection_send_multi(&stdout_watcher, wparts, 3)) {
+			bp = 1;
+			return; // backpressure
+		}
+#endif
+		connection_enable_write(&stdout_watcher, loop);
 
 		connection_consume_multi(conn, parts, 2);
 	}
@@ -100,7 +124,17 @@ void sock_cb(struct ev_loop *loop, struct ev_io *w, int revents) {
 
 static void stdout_cb(struct ev_loop *loop, struct ev_io *w, int revents) {
 	if (revents & EV_WRITE) {
-		connection_onwrite((connection*)w, loop);
+		connection *conn = (connection*)w;
+		connection_onwrite(conn, loop);
+
+		if (connection_empty_send(conn)) {
+			connection_disable_write(conn, loop);
+		}
+
+		if (bp) {
+			ev_feed_event(loop, &sock_watcher, EV_READ);
+			bp = 0;
+		}
 	}
 }
 
@@ -153,30 +187,15 @@ int main(int argc, char **argv) {
 
 
 	unsigned int evflags = ev_recommended_backends() | EVBACKEND_KQUEUE | EVBACKEND_EPOLL;
-	struct ev_loop *loop = ev_default_loop (evflags);
+	struct ev_loop *loop = ev_default_loop(evflags);
 
 	// connect
-	int sock = 0;
-	struct sockaddr_in serv_addr; 
-	if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) return 1;
-	if (socket_setnonblock(sock) < 0) return 1;
-	if (socket_setnodelay(sock) < 0) return 1;
+	int sock = socket_connect(host, port);
+	if (sock < 0) return 1;
 
 	connection_init(&sock_watcher, MAX_MESSAGE_SIZE);
 	ev_io_init(&sock_watcher.io, sock_cb, sock, EV_WRITE|EV_READ);
 	ev_io_start(loop, &sock_watcher.io);
-
-	serv_addr.sin_family = AF_INET; 
-	serv_addr.sin_port = htons(atoi(port)); 
-	if (inet_pton(AF_INET, host, &serv_addr.sin_addr) <= 0) { 
-		return 1; 
-	} 
-
-	if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) { 
-		if (errno != EINPROGRESS) {
-			return 1;
-		}
-	}
 
 	// stdout
 	socket_setnonblock(1);
@@ -197,7 +216,7 @@ int main(int argc, char **argv) {
 	parts[3].len = strlen(topic);
 
 	connection_send_multi(&sock_watcher, parts, 4);
-	connection_make_writable(&sock_watcher, loop);
+	connection_enable_write(&sock_watcher, loop);
 
 	signal(SIGPIPE, SIG_IGN);
 

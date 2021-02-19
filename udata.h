@@ -5,6 +5,7 @@
 #include "queue.h"
 #include "store.h"
 #include "watchers.h"
+#include "threads.h"
 
 typedef struct loop_userdata {
 	ev_async async_w;
@@ -17,6 +18,7 @@ typedef struct loop_userdata {
 	i64 *write_offsets; //[MAX_TOPICS]; // copy of store->write_offsets
 
 	queue reader_worker_queue;
+	queue notify_worker_queue;
 	queue writer_worker_queue;
 	queue store_worker_queue;
 

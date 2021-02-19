@@ -28,6 +28,8 @@
 #include <sys/socket.h>
 #include <netdb.h>
 
+#include <errno.h>
+#include <stdlib.h>
 #include <string.h>
 
 int socket_setnonblock(int fd) {
@@ -81,5 +83,25 @@ int socket_bindlisten(char *addr, char *port, int backlog) {
 	if (socket_setnonblock(fd) < 0) return -1;
 
 	return fd;
+}
+
+int socket_connect(char *addr, char *port) {
+	int sock = 0;
+	struct sockaddr_in serv_addr;
+	if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) return -1;
+	if (socket_setnonblock(sock) < 0) return -1;
+	if (socket_setnodelay(sock) < 0) return -1;
+
+	serv_addr.sin_family = AF_INET;
+	serv_addr.sin_port = htons(atoi(port));
+	if (inet_pton(AF_INET, addr, &serv_addr.sin_addr) <= 0) return -1;
+
+	if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+		if (errno != EINPROGRESS) {
+			return -1;
+		}
+	}
+
+	return sock;
 }
 

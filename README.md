@@ -13,6 +13,8 @@ Async I/O is done through [libev](http://software.schmorp.de/pkg/libev.html).
 
 ## tail topic
 `$ ./esq-tail topic_a`
+`$ ./esq-tail -n -10 topic_a` (w/ last 10 events)
+`$ ./esq-tail -n +0 topic_a` (from start)
 
 ## write event
 `$ echo "hello" | ./esq-write topic_a`
@@ -26,6 +28,9 @@ Async I/O is done through [libev](http://software.schmorp.de/pkg/libev.html).
 ## drop topic
 `$ ./esq-drop topic_b`
 
+## tests
+`$ make test`
+
 ## benchmark
 `$ ./esq-bench`
 
@@ -35,8 +40,10 @@ Async I/O is done through [libev](http://software.schmorp.de/pkg/libev.html).
 * [lmdb](https://symas.com/lmdb/)
 * [lz4](http://lz4.github.io/lz4/)
 * [tinycthread](https://github.com/tinycthread/tinycthread)
+* [munit](https://github.com/nemequ/munit) for tests
 
 ## TODO
 * code cleanup
+* client library
 * esq-drop
 

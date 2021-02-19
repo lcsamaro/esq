@@ -48,23 +48,34 @@ connection stdin_watcher;
 char *topic = NULL;
 u8 topic_len = 0;
 int done = 0;
+int bp = 0;
 
 void sock_cb(struct ev_loop *loop, struct ev_io *w, int revents) {
 	connection* conn = (connection*)w;
 	if (revents & EV_WRITE) {
 		if (connection_onwrite(conn, loop) < 0) {
-			// TODO: err
 			exit(1);
 		}
 
-		if (done && connection_empty_send(conn)) {
-			// done
-			exit(0);
+		if (connection_empty_send(conn)) {
+			connection_disable_write(conn, loop);
 		}
+
+		if (bp) {
+			ev_feed_event(loop, &stdin_watcher, EV_READ);
+			bp = 0;
+		}
+
+		if (done && connection_empty_send(conn)) {
+			ev_io_stop(loop, w);
+			return;
+		}
+
+		if (!done) ev_feed_event(loop, &stdin_watcher, EV_READ);
+
 	}
 	if (revents & EV_READ) {
 		if (connection_onread(conn) < 0) {
-			// TODO err
 			exit(1);
 		}
 	}
@@ -76,18 +87,38 @@ static void stdin_cb(struct ev_loop *loop, struct ev_io *w, int revents) {
 
 	if (connection_onread(conn) < 0) {
 		done = 1;
-		return;
+		ev_io_stop(loop, w);
+		ev_feed_event(loop, &sock_watcher, EV_WRITE);
 	}
 
+	static int skip_next = 0;
 again:
 	for (;;) {
 		char *buf;
 		u32 len = connection_peek_all(conn, &buf);
 		char *end = memchr(buf, '\n', len);
-		if (!end) break;
+		if (!end) {
+			if (len + sizeof(u32) > MAX_MESSAGE_SIZE) {
+				skip_next = 1;
+				connection_reset(conn);
+			}
+			break;
+		}
+
+		if (skip_next) {
+			skip_next = 0;
+			fprintf(stderr, "skipping message\n");
+			goto skip;
+		}
 
 		// send event
 		u32 total_len = sizeof(char) + sizeof(u8) + topic_len + (end-buf);
+
+		if (total_len + sizeof(u32) > MAX_MESSAGE_SIZE) {
+			fprintf(stderr, "skipping message\n");
+			goto skip;
+		}
+
 		connection_iovec parts[5];
 		parts[0].buf = &total_len;
 		parts[0].len = sizeof(u32);
@@ -101,11 +132,12 @@ again:
 		parts[4].len = end-buf;
 
 		if (connection_send_multi(&sock_watcher, parts, 5)) {
-			ev_feed_event(loop, w, EV_READ);
+			bp = 1;
 			return; // backpressure
 		}
-		connection_make_writable(&sock_watcher, loop);
+		connection_enable_write(&sock_watcher, loop);
 
+skip:
 		connection_consume(conn, (end-buf)+1);
 	}
 }
@@ -138,9 +170,6 @@ int main(int argc, char **argv) {
 	if (!topic) usage();
 
 	topic_len = strlen(topic);
-
-	printf("topic: %s\tlen: %d\n", topic, topic_len);
-	printf("addr: %s\tport: %s\n", host, port);
 
 	unsigned int evflags = ev_recommended_backends() | EVBACKEND_KQUEUE | EVBACKEND_EPOLL;
 	struct ev_loop *loop = ev_default_loop (evflags);

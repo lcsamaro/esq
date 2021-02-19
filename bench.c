@@ -77,7 +77,7 @@ void sock_cb(struct ev_loop *loop, struct ev_io *watcher, int revents) {
 		while (!snd(conn)) {
 			total++;
 		}
-		connection_make_writable(conn, loop);
+		connection_enable_write(conn, loop);
 	}
 	if (revents & EV_READ) {
 		if (connection_onread(conn) < 0) {

@@ -247,16 +247,9 @@ int store_write_txn_end(store *s) {
 }
 
 int store_write_event(store *s, int itopic, char *buf, u32 len) {
-	MDB_txn *txn = s->wtxn;
-
 	MDB_cursor *mc = s->wmc;
 
 	u64 offset = store_get_offset(s, mc, itopic);
-
-	//printf("> topic: %d offset: %llu\n", itopic, offset&0xffffffffffffull);
-	/*if (!(offset&0xffffffffffffull)) {
-		store_create_topic(s, topic, itopic);
-	}*/
 
 	// compress
 #ifdef STORE_COMPRESSION
@@ -293,7 +286,7 @@ int store_write_event(store *s, int itopic, char *buf, u32 len) {
 	return 0;
 }
 
-int store_read_some(store *s, MDB_cursor *mc, int itopic, u64 offset, event_visitor fn, void *ctx) {
+int store_read_some(MDB_cursor *mc, int itopic, u64 offset, event_visitor fn, void *ctx) {
 	MDB_val k, v;
 
 	offset = offset | (((u64)itopic) << 48);
@@ -330,12 +323,8 @@ int store_read_some(store *s, MDB_cursor *mc, int itopic, u64 offset, event_visi
 			break;
 		}
 		some = 1;
-
-		/*u64 itopic;
-		memcpy(&itopic, k.mv_data, sizeof(u64));
-		if (itopic > MAX_TOPICS) break;*/
 	} while (mdb_cursor_get(mc, &k, &v, MDB_NEXT) == MDB_SUCCESS);
 
-	return 0; // more - write
+	return some ? 3 : 0; // more - write, nothing
 }
 

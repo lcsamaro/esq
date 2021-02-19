@@ -26,7 +26,6 @@
 #include <unistd.h>
 
 int connection_init(connection *o, u32 size) {
-	o->writable = 0;
 	if (ring_buffer_init(&o->r, size)) return 1;
 	if (ring_buffer_init(&o->w, size)) {
 		ring_buffer_destroy(&o->r);
@@ -41,20 +40,20 @@ void connection_destroy(connection *o) {
 }
 
 void connection_reset(connection *o) {
-	o->writable = 0;
 	ring_buffer_clear(&o->r);
 	ring_buffer_clear(&o->w);
 }
 
-int connection_is_writable(connection *o) {
-	return o->writable;
+void connection_enable_write(connection *c, struct ev_loop *loop) {
+	ev_io_stop(loop, (ev_io*)c);
+	ev_io_modify((ev_io*)c, EV_READ|EV_WRITE);
+	ev_io_start(loop, (ev_io*)c);
 }
 
-void connection_make_writable(connection *o, struct ev_loop *loop) {
-	ev_io_stop(loop, &o->io);
-	ev_io_modify(&o->io, EV_READ|EV_WRITE);
-	ev_io_start(loop, &o->io);
-	o->writable = 1;
+void connection_disable_write(connection *c, struct ev_loop *loop) {
+	ev_io_stop(loop, (ev_io*)c);
+	ev_io_modify((ev_io*)c, EV_READ);
+	ev_io_start(loop, (ev_io*)c);
 }
 
 int connection_send_multi(connection *o, connection_iovec *parts, u32 n) {
@@ -145,17 +144,15 @@ int connection_onwrite(connection *c, struct ev_loop *loop) {
 	}
 
 	ring_buffer_consume(&c->w, bytes);
-	if (!ring_buffer_size(&c->w)) {
-		ev_io_stop(loop, &c->io);
-		ev_io_modify(&c->io, EV_READ);
-		ev_io_start(loop, &c->io);
-		c->writable = 0;
-	}
+	/*if (!ring_buffer_size(&c->w)) {
+		ev_io_stop(loop, (ev_io*)c);
+		ev_io_modify((ev_io*)c, EV_READ);
+		ev_io_start(loop, (ev_io*)c);
+	}*/
 	return bytes;
 }
 
 int connection_empty_send(connection *c) {
-	u32 len = ring_buffer_size(&c->w);
-	return !len;
+	return !ring_buffer_size(&c->w);
 }
 

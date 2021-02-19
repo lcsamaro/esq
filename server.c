@@ -57,6 +57,7 @@
 #define MAX_READ_TRDS 32
 
 #define READER_WORKER_QUEUE_SIZE ((sizeof(session*)+sizeof(u32))*maxconn * 2)
+#define NOTIFY_READER_WORKER_QUEUE_SIZE (READER_WORKER_QUEUE_SIZE)
 #define WRITER_WORKER_QUEUE_SIZE (MAX_MESSAGE_SIZE * 256)
 #define STORE_WORKER_QUEUE_SIZE (WRITER_WORKER_QUEUE_SIZE * 4)
 
@@ -102,7 +103,7 @@ int reader_worker(void *arg) {
 		u32 len;
 
 		// > rqueue
-		queue_peek(&u->reader_worker_queue, (void**)&buf, &len);
+		queue_peek(&u->reader_worker_queue, (void**)&buf, &len, 1);
 		if (!len) { // close signal
 			queue_drop(&u->reader_worker_queue);
 			break;
@@ -118,8 +119,10 @@ int reader_worker(void *arg) {
 		session_lock(s);
 
 		s->enqueued = 0;
-
-		if (s->live) goto skip;
+		if (s->live || !s->watch) {
+			session_unlock(s);
+			continue;
+		}
 
 		if (mdb_txn_renew(txn)) {
 			// err
@@ -129,16 +132,17 @@ int reader_worker(void *arg) {
 		}
 
 		int should_write = 0;
-		switch(store_read_some(&u->s, mc, s->watch, s->offset, store_visitor, s)) {
+		switch(store_read_some(mc, s->watch, s->offset, store_visitor, s)) {
 		case 1: // done - write
+		case 3: // more - write
 			should_write = 1;
-		case 2: // done - nothing to write
-			// enqueue again
-			s->enqueued = 1;
-			queue_push(&u->reader_worker_queue, &s, sizeof(session*), 1);
 			break;
-		case 0: // more - write
-			should_write = 1;
+		case 2: // done - nothing to write
+			if (queue_push(&u->notify_worker_queue, &s, sizeof(session*), 0)) {
+				// should never happen
+			}
+			break;
+		case 0: // full buffer
 			break;
 		case -1: // error
 			break;
@@ -146,20 +150,15 @@ int reader_worker(void *arg) {
 
 		mdb_txn_reset(txn);
 
-		int mw = 0;
-skip:
-
-		if (should_write && !connection_is_writable((connection*)s)) {
-			mw = 1;
+		if (should_write) {
+			mtx_lock(&u->mutex);
+			connection_enable_write((connection*)s, loop);
+			mtx_unlock(&u->mutex);
 		}
 
 		session_unlock(s);
 
-		if (mw) {
-			mtx_lock(&u->mutex);
-			connection_make_writable((connection*)s, loop);
-			mtx_unlock(&u->mutex);
-
+		if (should_write) {
 			ev_async_send(loop, &u->async_w);
 		}
 	}
@@ -181,7 +180,7 @@ int writer_worker(void *arg) {
 		u32 len;
 
 		// > wqueue
-		queue_peek(&u->writer_worker_queue, (void**)&buf, &len);
+		queue_peek(&u->writer_worker_queue, (void**)&buf, &len, 1);
 
 		if (!len) { // close signal
 			queue_drop(&u->writer_worker_queue);
@@ -214,7 +213,7 @@ int store_worker(void *arg) {
 		char *buf;
 		u32 len;
 
-		queue_peek(&u->store_worker_queue, (void**)&buf, &len);
+		queue_peek(&u->store_worker_queue, (void**)&buf, &len, 1);
 
 		if (store_write_txn_begin(&u->s)) {
 			goto write_err_drop;
@@ -271,6 +270,15 @@ create_drop:
 		if (store_write_txn_end(&u->s)) {
 			goto write_err;
 		}
+
+		// notify readers
+		if (queue_peek(&u->notify_worker_queue, (void**)&buf, &len, 0)) continue;
+		do {
+			if (queue_push(&u->reader_worker_queue, buf, len, 0)) {
+				// should not happen
+			}
+		} while (!queue_peek_next(&u->notify_worker_queue, (void**)&buf, &len));
+		queue_pop(&u->notify_worker_queue);
 	}
 done:
 	return 0;
@@ -296,11 +304,17 @@ void io_cb(struct ev_loop *loop, struct ev_io* watcher, int revents) {
 		// > session
 		session_lock(s);
 
-		int w = connection_onwrite(conn, loop);
-		if (w < 0) { // err
-			goto disconnect_locked;
-		} else if (!w) {
-			goto unlock;
+		//mtx_lock(&u->mutex);
+		if (connection_onwrite(conn, loop) < 0) { // err
+			//mtx_unlock(&u->mutex);
+			goto disconnect;
+		}
+		//mtx_unlock(&u->mutex);
+
+		if (connection_empty_send(conn)) {
+			mtx_lock(&u->mutex);
+			connection_disable_write(conn, loop);
+			mtx_unlock(&u->mutex);
 		}
 
 		if (s->watch && !s->live) {
@@ -312,10 +326,9 @@ void io_cb(struct ev_loop *loop, struct ev_io* watcher, int revents) {
 			// > rqueue
 			if (queue_push(&u->reader_worker_queue, &s, sizeof(session*), 0)) {
 				// < rqueue
-
 				// should never happen with a reader queue big enough
 				// but if it happens, disconnect
-				goto disconnect_locked;
+				goto disconnect;
 			}
 			// < rqueue
 
@@ -326,10 +339,17 @@ unlock:
 		// < session
 	}
 
+	if (!(revents & EV_READ)) {
+		goto done;
+	}
 
-	if (!(revents & EV_READ)) goto done;
-
-	if (connection_onread(conn) < 0) goto disconnect;
+	session_lock(s);
+	//mtx_lock(&u->mutex);
+	if (connection_onread(conn) < 0) {
+		//mtx_unlock(&u->mutex);
+		goto disconnect;
+	}
+	//mtx_unlock(&u->mutex);
 
 	for (;;) {
 		connection_iovec parts[2];
@@ -339,22 +359,17 @@ unlock:
 		parts[1].len = 0;
 
 		// > session
-		session_lock(s);
 		if (connection_peek_multi(conn, parts, 1)) {
-			session_unlock(s);
-			// < session
-			goto done;
+			break;
 		}
 		memcpy(&parts[1].len, parts[0].buf, sizeof(u32));
 
-		if (parts[1].len > MAX_MESSAGE_SIZE) { // behave
-			goto disconnect_locked;
+		if (parts[1].len + sizeof(u32) > MAX_MESSAGE_SIZE) { // behave
+			goto disconnect;
 		}
 
 		if (connection_peek_multi(conn, parts, 2)) {
-			// < session
-			session_unlock(s);
-			goto done;
+			break;
 		}
 
 		queue_buffer_part qparts[2];
@@ -363,33 +378,21 @@ unlock:
 		qparts[1].buf = parts[1].buf;
 		qparts[1].len = parts[1].len;
 
-		switch (validate_command((char*)parts[1].buf, parts[1].len)) {
-		case 1: // writer
+		if (validate_command((char*)parts[1].buf, parts[1].len) == 1) {
+			// writer
 			// > wqueue
-			if (queue_push_multi(&u->writer_worker_queue, qparts, 2, 1)) {
-				session_unlock(s);
-				goto done; // backpressure
-			}
-			// < wqueue
-			goto skip;
-		case 0: // here
-			break;
-		default: // invalid
-			goto skip;
+			queue_push_multi(&u->writer_worker_queue, qparts, 2, 1);
 		}
 
-skip:
 		connection_consume_multi(conn, parts, 2);
-		session_unlock(s);
-		// < session
 	}
+	session_unlock(s);
 done:
 	mtx_lock(&u->mutex);
 	return;
-disconnect_locked:
-	session_unlock(s);
 disconnect:
-	ev_io_stop(loop, (ev_io*)s);
+	session_unlock(s);
+
 	close(((ev_io*)s)->fd);
 
 	watchers_lock(&u->ws);
@@ -401,6 +404,7 @@ disconnect:
 	session_pool_free(&u->pool, s);
 
 	mtx_lock(&u->mutex);
+	ev_io_stop(loop, (ev_io*)s);
 	return;
 }
 
@@ -429,12 +433,12 @@ void accept_cb(struct ev_loop *loop, struct ev_io *w, int revents) {
 	ev_io_start(loop, (ev_io*)s);
 }
 
-static void l_release(struct ev_loop *loop) EV_NOEXCEPT {
+static void l_release(struct ev_loop *loop) {
 	loop_userdata *u = (loop_userdata*)ev_userdata(loop);
 	mtx_unlock(&u->mutex);
 }
 
-static void l_acquire(struct ev_loop *loop) EV_NOEXCEPT {
+static void l_acquire(struct ev_loop *loop) {
 	loop_userdata *u = (loop_userdata*)ev_userdata(loop);
 	mtx_lock(&u->mutex);
 }
@@ -563,6 +567,11 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 
+	if (queue_init(&u.notify_worker_queue, NOTIFY_READER_WORKER_QUEUE_SIZE)) {
+		puts("Error creating notify worker queue");
+		return 1;
+	}
+
 	if (queue_init(&u.writer_worker_queue, WRITER_WORKER_QUEUE_SIZE)) {
 		puts("Error creating writer worker queue");
 		return 1;
@@ -599,6 +608,8 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 
+	signal(SIGPIPE, SIG_IGN);
+
 	ev_signal sigint_watcher;
 	ev_signal_init(&sigint_watcher, sig_cb, SIGINT);
 	ev_signal_start(loop, &sigint_watcher);
@@ -612,6 +623,8 @@ int main(int argc, char **argv) {
 	ev_io_start(loop, &w_accept);
 
 	ev_set_loop_release_cb(loop, l_release, l_acquire);
+
+	mtx_lock(&u.mutex);
 
 	ev_run(loop, 0);
 
@@ -639,6 +652,7 @@ int main(int argc, char **argv) {
 	}
 
 	queue_destroy(&u.reader_worker_queue);
+	queue_destroy(&u.notify_worker_queue);
 	queue_destroy(&u.writer_worker_queue);
 	queue_destroy(&u.store_worker_queue);
 

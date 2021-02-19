@@ -28,8 +28,6 @@ int session_init(session *s) {
 		return 1;
 	}
 
-	s->connected = 1;
-
 	s->offset = 0;
 	s->enqueued = 0;
 	s->watch = 0;
@@ -44,8 +42,6 @@ void session_destroy(session *s) {
 }
 
 void session_reset(session *s) {
-	s->connected = 0;
-
 	s->offset = 0;
 	s->enqueued = 0;
 	s->watch = 0;

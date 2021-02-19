@@ -25,7 +25,7 @@
 #include <stdlib.h>
 
 int session_pool_init(session_pool *p, u32 n) {
-	p->pool = malloc(n * sizeof(session));
+	p->pool = (session*)malloc(n * sizeof(session));
 	if (!p->pool) {
 		return 1;
 	}

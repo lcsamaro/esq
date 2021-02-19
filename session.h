@@ -40,9 +40,6 @@ typedef struct session {
 	int watch;
 	int live;
 
-	// disconnect
-	int connected;
-
 	// pool
 	struct session *next;
 

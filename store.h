@@ -35,7 +35,7 @@ int store_write_event(store *s, int itopic, char *buf, u32 len);
 int store_drop(store *s, char *topic);
 
 typedef int (*event_visitor)(u64 offset, char *buf, u32 len, void *ctx);
-int store_read_some(store *s, MDB_cursor *mc, int itopic, u64 offset, event_visitor fn, void *ctx);
+int store_read_some(MDB_cursor *mc, int itopic, u64 offset, event_visitor fn, void *ctx);
 
 #endif /* STORE_H */
 
