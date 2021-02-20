@@ -45,7 +45,6 @@ struct session {
 };
 
 int session_init(session *s) {
-	s->delayed = 0;
 	s->next = NULL;
 	return connection_init(&s->conn, MAX_MESSAGE_SIZE);
 }
@@ -106,8 +105,9 @@ static void sock_cb(struct ev_loop *loop, struct ev_io *w, int revents) {
 		int str_len = (int)(len - sizeof(u64));
 
 		if (!u->cb(offset, s->topic, s->topic_len, str, str_len, u->ctx)) { // not handled
-			s->delayed = 1;
-			ev_feed_event(loop, w, EV_READ);
+			session *n = s->next;
+			if (!n) n = u->q->next;
+			ev_feed_event(loop, (ev_io*)n, EV_READ);
 			return;
 		}
 
