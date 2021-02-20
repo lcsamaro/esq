@@ -58,7 +58,10 @@ void sock_cb(struct ev_loop *loop, struct ev_io *w, int revents) {
 			connection_disable_write(conn, loop);
 		}
 
-		if (done && connection_empty_send(conn)) goto done;
+		if (done && connection_empty_send(conn)) {
+			shutdown(w->fd, SHUT_WR);
+			return;
+		}
 
 		if (!done) ev_feed_event(loop, &stdin_watcher, EV_READ);
 
@@ -197,7 +200,6 @@ int main(int argc, char **argv) {
 
 	ev_loop(loop, 0);
 
-	shutdown(sock, SHUT_WR);
 	close(sock);
 
 	return 0;
