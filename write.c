@@ -53,9 +53,7 @@ int bp = 0;
 void sock_cb(struct ev_loop *loop, struct ev_io *w, int revents) {
 	connection* conn = (connection*)w;
 	if (revents & EV_WRITE) {
-		if (connection_onwrite(conn, loop) < 0) {
-			exit(1);
-		}
+		if (connection_onwrite(conn, loop) < 0) goto done;
 
 		if (connection_empty_send(conn)) {
 			connection_disable_write(conn, loop);
@@ -66,19 +64,18 @@ void sock_cb(struct ev_loop *loop, struct ev_io *w, int revents) {
 			bp = 0;
 		}
 
-		if (done && connection_empty_send(conn)) {
-			ev_io_stop(loop, w);
-			return;
-		}
+		if (done && connection_empty_send(conn)) goto done;
 
 		if (!done) ev_feed_event(loop, &stdin_watcher, EV_READ);
 
 	}
 	if (revents & EV_READ) {
-		if (connection_onread(conn) < 0) {
-			exit(1);
-		}
+		if (connection_onread(conn) < 0) goto done;
 	}
+	return;
+done:
+	ev_io_stop(loop, w);
+	ev_io_stop(loop, &stdin_watcher.io);
 }
 
 static void stdin_cb(struct ev_loop *loop, struct ev_io *w, int revents) {
@@ -89,6 +86,7 @@ static void stdin_cb(struct ev_loop *loop, struct ev_io *w, int revents) {
 		done = 1;
 		ev_io_stop(loop, w);
 		ev_feed_event(loop, &sock_watcher, EV_WRITE);
+		return;
 	}
 
 	static int skip_next = 0;
