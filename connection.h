@@ -55,6 +55,7 @@ void connection_consume_multi(connection *o, connection_iovec *parts, u32 n);
 int connection_onread(connection *c);
 int connection_onwrite(connection *c, struct ev_loop *loop);
 
+int connection_empty_read(connection *c);
 int connection_empty_send(connection *c);
 
 #endif /* CONNECTION_H */

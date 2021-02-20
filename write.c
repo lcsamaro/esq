@@ -48,7 +48,6 @@ connection stdin_watcher;
 char *topic = NULL;
 u8 topic_len = 0;
 int done = 0;
-int bp = 0;
 
 void sock_cb(struct ev_loop *loop, struct ev_io *w, int revents) {
 	connection* conn = (connection*)w;
@@ -57,11 +56,6 @@ void sock_cb(struct ev_loop *loop, struct ev_io *w, int revents) {
 
 		if (connection_empty_send(conn)) {
 			connection_disable_write(conn, loop);
-		}
-
-		if (bp) {
-			ev_feed_event(loop, &stdin_watcher, EV_READ);
-			bp = 0;
 		}
 
 		if (done && connection_empty_send(conn)) goto done;
@@ -82,11 +76,10 @@ static void stdin_cb(struct ev_loop *loop, struct ev_io *w, int revents) {
 	connection* conn = (connection*)w;
 	if (!(revents & EV_READ)) return;
 
-	if (connection_onread(conn) < 0) {
-		done = 1;
+	if (connection_onread(conn) < 0 && connection_empty_read(conn)) {
 		ev_io_stop(loop, w);
+		done = 1;
 		ev_feed_event(loop, &sock_watcher, EV_WRITE);
-		return;
 	}
 
 	static int skip_next = 0;
@@ -130,7 +123,6 @@ again:
 		parts[4].len = end-buf;
 
 		if (connection_send_multi(&sock_watcher, parts, 5)) {
-			bp = 1;
 			return; // backpressure
 		}
 		connection_enable_write(&sock_watcher, loop);
@@ -204,6 +196,9 @@ int main(int argc, char **argv) {
 	signal(SIGPIPE, SIG_IGN);
 
 	ev_loop(loop, 0);
+
+	shutdown(sock, SHUT_WR);
+	close(sock);
 
 	return 0;
 }

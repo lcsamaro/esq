@@ -152,6 +152,10 @@ int connection_onwrite(connection *c, struct ev_loop *loop) {
 	return bytes;
 }
 
+int connection_empty_read(connection *c) {
+	return !ring_buffer_size(&c->r);
+}
+
 int connection_empty_send(connection *c) {
 	return !ring_buffer_size(&c->w);
 }
